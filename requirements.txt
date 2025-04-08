@@ -1,4 +1,0 @@
-streamlit
-beautifulsoup4
-requests
-waitress
