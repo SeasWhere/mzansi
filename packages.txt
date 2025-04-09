@@ -1,0 +1,5 @@
+# Example requirements.txt
+streamlit
+requests
+beautifulsoup4
+weasyprint
