@@ -808,14 +808,3 @@ if submitted:
 st.markdown("---")
 st.caption(f"Mzansi EDGAR Fetcher v1.1 | Data sourced from SEC EDGAR | Processing limited to {MAX_FILINGS_TO_PROCESS} filings, stopping before FY{EARLIEST_FISCAL_YEAR_SUFFIX}.")
 ```
-
-**Summary of Changes:**
-
-1.  **`MAX_FILINGS_TO_PROCESS = 50`**: A constant added near the top. The `process_filing` loop now checks this limit and stops queuing tasks if it's reached.
-2.  **`EARLIEST_FISCAL_YEAR_SUFFIX = 17`**: A constant defining the cutoff year.
-3.  **FY17 Check in `process_filing`**: The loop now calculates the `period` string for each 10-K/10-Q, extracts the two-digit year suffix, and compares it to `EARLIEST_FISCAL_YEAR_SUFFIX`. If the filing's year is less than this (e.g., 16, 15...), the loop breaks, preventing older filings from being processed.
-4.  **Logging**: Added log messages indicating when processing stops due to either the filing limit or the year cutoff.
-5.  **UI Text**: Updated the description and help text slightly to inform the user about these limits.
-6.  **Minor Refinements**: Added slightly more robust error handling/logging in a few places (like asset downloading and period parsing) and increased the default request timeout.
-
-These changes should make the app's runtime more predictable by limiting the total work done and ensuring it stops processing filings older than FY
