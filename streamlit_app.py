@@ -43,7 +43,7 @@ except Exception as e:
 # -------------------------
 HEADERS = {
     # User agent includes contact info as requested by SEC best practices
-    'User-Agent': 'Mzansi EDGAR Viewer v1.5 (support@example.com)' # Version bump
+    'User-Agent': 'Mzansi EDGAR Viewer v1.8 (support@example.com)' # Version bump
 }
 
 session = requests.Session()
@@ -53,8 +53,8 @@ DEFAULT_TIMEOUT = 20  # Timeout for individual HTTP requests in seconds
 # --- Scope Control ---
 # Fiscal Year cutoff: Process filings from this year onwards.
 EARLIEST_FISCAL_YEAR_SUFFIX = 17
-# --- Reintroduce Limit to Prevent Resource Exhaustion on Streamlit Cloud ---
-MAX_FILINGS_TO_PROCESS = 40 # Limit the number of relevant filings processed
+# --- Limit to Prevent Resource Exhaustion ---
+MAX_FILINGS_TO_PROCESS = 25 # Limit the number of relevant filings processed
 # ----------------------------------
 
 
@@ -134,11 +134,11 @@ def get_filing_period(form, filing_date, fiscal_year_end_month, fy_adjust):
                 fiscal_year -= 1
             return f"FY{fiscal_year % 100:02d}"
 
-# download_assets function remains the same
-def download_assets(soup, base_url, output_dir, log_lines):
+# --- MODIFIED download_assets function ---
+def download_assets(soup, base_url, filing_output_dir, log_lines): # Accepts specific dir
     """
-    Downloads assets (images, CSS) linked in the HTML, saves them locally,
-    and updates the links in the BeautifulSoup object to relative local paths.
+    Downloads assets (images, CSS) linked in the HTML, saves them into the
+    specific filing's output directory, and updates links to relative paths.
     """
     downloaded_assets_filenames = set()
     processed_urls = set()
@@ -176,7 +176,8 @@ def download_assets(soup, base_url, output_dir, log_lines):
 
                 _, ext = os.path.splitext(safe_filename)
                 if not ext: safe_filename += ".asset"
-                local_path = os.path.join(output_dir, safe_filename)
+                # --- Save asset in the specific filing's directory ---
+                local_path = os.path.join(filing_output_dir, safe_filename)
 
                 if not os.path.exists(local_path):
                     time.sleep(0.11)
@@ -190,13 +191,14 @@ def download_assets(soup, base_url, output_dir, log_lines):
                     if guessed_ext and guessed_ext != ".asset" and not safe_filename.lower().endswith(guessed_ext.lower()):
                          base, _ = os.path.splitext(safe_filename)
                          new_safe_filename = base + guessed_ext
-                         new_local_path = os.path.join(output_dir, new_safe_filename)
+                         new_local_path = os.path.join(filing_output_dir, new_safe_filename)
                          if not os.path.exists(new_local_path):
                               safe_filename = new_safe_filename
                               local_path = new_local_path
 
                     with open(local_path, 'wb') as f: f.write(r.content)
 
+                # --- Update link to be relative filename ---
                 tag[url_attr] = safe_filename
                 downloaded_assets_filenames.add(safe_filename)
 
@@ -209,14 +211,15 @@ def download_assets(soup, base_url, output_dir, log_lines):
             except Exception as e:
                 log_lines.append(f"Warning: General error processing asset {absolute_url}: {str(e)}")
 
-    if downloaded_assets_filenames:
-        log_lines.append(f"Processed {len(downloaded_assets_filenames)} unique local asset files for this filing.")
+    # if downloaded_assets_filenames: # Reduce log noise
+    #     log_lines.append(f"Processed {len(downloaded_assets_filenames)} asset file(s).")
     return list(downloaded_assets_filenames)
 
-# convert_to_pdf function remains the same (using WeasyPrint)
+# convert_to_pdf function remains the same (WeasyPrint base_url handles relative paths)
 def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, fy_adjust, log_lines):
     """
     Converts the local HTML file (with updated asset links) to PDF using WeasyPrint.
+    Assumes HTML file and its assets are in the same directory.
     """
     pdf_path = None
     try:
@@ -225,17 +228,19 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
         base_name = f"{ticker}_{period}" if ticker else f"{cik}_{period}"
         safe_base_name = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in base_name).strip('._')
         if not safe_base_name: safe_base_name = f"{cik}_{accession}"
+        # --- Save PDF in the same directory as the HTML ---
         pdf_filename = f"{safe_base_name}.pdf"
         pdf_path = os.path.join(os.path.dirname(html_path), pdf_filename)
-        log_lines.append(f"Attempting PDF conversion with WeasyPrint: {pdf_filename}")
+        # log_lines.append(f"Attempting PDF conversion with WeasyPrint: {pdf_filename}")
 
+        # WeasyPrint uses base_url derived from html_path to find relative assets
         html_dir_url = 'file://' + os.path.dirname(os.path.abspath(html_path)) + '/'
         html = HTML(filename=html_path, base_url=html_dir_url)
         html.write_pdf(pdf_path)
 
         if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 100:
-            log_lines.append(f"PDF created successfully using WeasyPrint: {pdf_filename}")
-            return pdf_path
+            log_lines.append(f"PDF created: {pdf_filename}")
+            return pdf_path # Return the full path to the PDF
         else:
             log_lines.append(f"ERROR: WeasyPrint conversion resulted in missing or near-empty file: {pdf_filename}")
             if os.path.exists(pdf_path):
@@ -250,63 +255,84 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
          log_lines.append(f"ERROR: Value error during PDF setup ({os.path.basename(html_path)}): {str(e)}")
          return None
     except Exception as e:
-        log_lines.append(f"ERROR: Unexpected error during WeasyPrint PDF conversion ({os.path.basename(html_path)}): {str(e)}")
-        log_lines.append(traceback.format_exc())
+        log_lines.append(f"ERROR: WeasyPrint PDF conversion failed for {accession} ({os.path.basename(html_path)}): {str(e)}")
+        log_lines.append(traceback.format_exc(limit=1))
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
             except OSError as e_clean: log_lines.append(f"Warning: Could not remove failed PDF {pdf_filename} during cleanup: {e_clean}")
         return None
 
-# cleanup_files function remains the same
-def cleanup_files(html_path, assets, output_dir, log_lines):
-    """Removes the temporary HTML file and downloaded asset files."""
+# --- MODIFIED cleanup_files function ---
+def cleanup_files(html_path, assets, filing_output_dir, log_lines): # Accepts specific dir
+    """Removes the temporary HTML file and downloaded asset files from the specific filing directory."""
     cleaned_count = 0
     try:
+        # Clean HTML file
         if html_path and os.path.exists(html_path):
             os.remove(html_path)
             cleaned_count += 1
+
+        # Clean asset files from the specific directory
         for asset_filename in assets:
-            asset_path = os.path.join(output_dir, asset_filename)
+            asset_path = os.path.join(filing_output_dir, asset_filename) # Use filing_output_dir
             if os.path.exists(asset_path):
                 try:
                     os.remove(asset_path)
                     cleaned_count += 1
                 except OSError as e:
                      log_lines.append(f"Warning: Error cleaning asset {asset_filename}: {e}")
-    except Exception as e:
-        log_lines.append(f"ERROR: Exception during file cleanup: {str(e)}")
 
-# download_and_process function remains the same
-def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, output_dir):
+        # Optionally remove the filing-specific directory itself if empty,
+        # but relying on TemporaryDirectory cleanup is safer/simpler.
+        # if not os.listdir(filing_output_dir):
+        #     os.rmdir(filing_output_dir)
+
+        if cleaned_count > 0:
+            log_lines.append(f"Cleaned {cleaned_count} intermediate file(s) for this filing.")
+    except Exception as e:
+        log_lines.append(f"ERROR: Exception during file cleanup for {os.path.basename(filing_output_dir)}: {str(e)}")
+
+
+# --- MODIFIED download_and_process function ---
+def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, filing_output_dir): # Accepts specific dir
     """
-    Worker function: Downloads HTML, downloads assets, updates links, converts to PDF, optionally cleans up.
+    Worker function: Downloads HTML/assets into filing_output_dir, converts to PDF, optionally cleans up.
     Returns a tuple: (form_type, path_to_pdf or None).
     """
     html_path = None
     downloaded_assets = []
     pdf_path = None
+    log_prefix = f"[{accession} {form}]"
 
     try:
-        log_lines.append(f"Processing {form} {date} ({accession})...")
+        log_lines.append(f"{log_prefix} Starting processing in {os.path.basename(filing_output_dir)}...")
+        # --- Download Primary HTML Document ---
         time.sleep(0.11)
+        log_lines.append(f"{log_prefix} Downloading main HTML...")
         r = session.get(doc_url, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
+        log_lines.append(f"{log_prefix} Download complete.")
 
+        # --- Save HTML in the specific filing's directory ---
         base_html_filename = f"{cik}_{form}_{date}_{accession}.htm"
-        html_path = os.path.join(output_dir, base_html_filename)
+        html_path = os.path.join(filing_output_dir, base_html_filename) # Use filing_output_dir
 
+        # --- Decode HTML Content ---
         try: decoded_text = r.content.decode('utf-8')
         except UnicodeDecodeError:
              try: decoded_text = r.content.decode('latin-1')
              except UnicodeDecodeError:
                  decoded_text = r.content.decode('utf-8', errors='replace')
-                 log_lines.append(f"Warning: Used 'utf-8' with error replacement for {accession}.")
+                 log_lines.append(f"{log_prefix} Warning: Used 'utf-8' with error replacement.")
 
+        # --- Pre-process & Parse HTML ---
         replacements = { "Â\x9d": "\"", "â€œ": "\"", "â€™": "'", "â€˜": "'", "â€“": "-", "â€”": "—", "&nbsp;": " ", "\u00a0": " " }
-        for wrong, correct in replacements.items():
-            decoded_text = decoded_text.replace(wrong, correct)
+        for wrong, correct in replacements.items(): decoded_text = decoded_text.replace(wrong, correct)
+        # log_lines.append(f"{log_prefix} Parsing HTML...")
         soup = BeautifulSoup(decoded_text, 'html.parser')
+        # log_lines.append(f"{log_prefix} HTML parsed.")
 
+        # Ensure UTF-8 meta tag
         if not soup.find('meta', charset=True):
             meta_tag = soup.new_tag('meta', charset='UTF-8')
             head = soup.head or soup.new_tag('head')
@@ -315,35 +341,54 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
                  doc_root.insert(0, head)
             head.insert(0, meta_tag)
 
+        # --- Download Assets into the specific filing's directory ---
+        # log_lines.append(f"{log_prefix} Downloading assets...")
         doc_base_url = urljoin(doc_url, '.')
-        downloaded_assets = download_assets(soup, doc_base_url, output_dir, log_lines)
+        downloaded_assets = download_assets(soup, doc_base_url, filing_output_dir, log_lines) # Pass filing_output_dir
+        # log_lines.append(f"{log_prefix} Asset download finished.")
 
+        # --- Save Processed HTML ---
+        # log_lines.append(f"{log_prefix} Saving processed HTML...")
         with open(html_path, 'w', encoding='utf-8') as f: f.write(str(soup))
+        # log_lines.append(f"{log_prefix} HTML saved.")
 
+        # --- Convert to PDF ---
+        log_lines.append(f"{log_prefix} Starting PDF conversion...")
         pdf_path = convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month, fy_adjust, log_lines)
+        if pdf_path:
+            log_lines.append(f"{log_prefix} PDF conversion successful.")
+        else:
+            log_lines.append(f"{log_prefix} PDF conversion failed.")
+
+        # --- Return PDF Path (or None) ---
+        # pdf_path will be inside the filing_output_dir
         return (form, pdf_path)
 
+    # --- Error Handling ---
     except requests.exceptions.Timeout:
-         log_lines.append(f"ERROR: Timeout downloading main document: {doc_url}")
+         log_lines.append(f"{log_prefix} ERROR: Timeout downloading main document.")
     except requests.exceptions.RequestException as e:
-        log_lines.append(f"ERROR: Download failed for {doc_url}: {str(e)}")
+        log_lines.append(f"{log_prefix} ERROR: Download failed: {str(e)}")
     except IOError as e:
-         log_lines.append(f"ERROR: File I/O error during processing {accession}: {str(e)}")
+         log_lines.append(f"{log_prefix} ERROR: File I/O error: {str(e)}")
     except Exception as e:
-        log_lines.append(f"ERROR: Unexpected error processing {form} {accession}: {str(e)}")
-        log_lines.append(traceback.format_exc())
+        log_lines.append(f"{log_prefix} ERROR: Unexpected processing error: {str(e)}")
+        log_lines.append(traceback.format_exc(limit=2))
 
+    # --- Cleanup ---
     finally:
+        # Cleanup happens within the specific filing's directory
         if cleanup_flag:
-            cleanup_files(html_path, downloaded_assets, output_dir, log_lines)
+            cleanup_files(html_path, downloaded_assets, filing_output_dir, log_lines) # Pass filing_output_dir
+        log_lines.append(f"{log_prefix} Processing finished.")
 
-    return (form, None)
+    return (form, None) # Return None if error occurred
 
 
 # --- MODIFIED process_filing function ---
-def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tmp_dir):
+def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tmp_dir): # tmp_dir is now base dir
     """
-    Main orchestrator: Fetches EDGAR index, filters filings based on year/form/limit,
+    Main orchestrator: Fetches EDGAR index, filters filings, creates subdirs,
     submits tasks to thread pool, collects results.
     """
     pdf_files = {"10-K": [], "10-Q": []}
@@ -365,21 +410,10 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
         if not ticker and 'tickers' in submissions and submissions['tickers']:
              ticker = submissions['tickers'][0]
              log_lines.append(f"Note: Ticker not provided, using '{ticker}' from SEC data.")
-    except requests.exceptions.Timeout:
-         log_lines.append(f"ERROR: Timeout connecting to SEC submissions URL.")
-         st.error("Timeout connecting to SEC EDGAR. Please try again later.")
+    except Exception as e: # Catch all exceptions during fetch
+         log_lines.append(f"ERROR: Failed to retrieve or process submission data for CIK {cik_padded}: {str(e)}")
+         st.error(f"Failed to retrieve or process data for CIK {cik_padded}. Check CIK and network.")
          return pdf_files
-    except requests.exceptions.RequestException as e:
-        log_lines.append(f"ERROR: Could not retrieve submission data for CIK {cik_padded}: {str(e)}")
-        err_msg = f"Could not retrieve data for CIK {cik_padded}. "
-        if "404" in str(e): err_msg += "Please double-check the CIK."
-        else: err_msg += "Check network or try again."
-        st.error(err_msg)
-        return pdf_files
-    except Exception as e:
-        log_lines.append(f"ERROR: Failed to process submission data: {str(e)}")
-        st.error("Failed to process data from SEC EDGAR.")
-        return pdf_files
 
     try:
         filings_data = submissions.get('filings', {}).get('recent', {})
@@ -401,18 +435,19 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
         log_lines.append(f"Found {list_len} recent filings entries. Filtering...")
 
         tasks_to_submit = []
-        processed_relevant_count = 0 # Counter for relevant filings considered
+        processed_relevant_count = 0
 
         # --- Filter Filings BEFORE Submitting to Threads ---
         for i in range(list_len):
             form = forms[i]
-            if form not in ["10-K", "10-Q"]: continue # Filter 1: Relevant forms
+            accession_raw = accession_numbers[i]
+            if form not in ["10-K", "10-Q"]: continue
 
-            # --- ADDED: Check if we've hit the processing limit ---
             if processed_relevant_count >= MAX_FILINGS_TO_PROCESS:
                  log_lines.append(f"Reached processing limit ({MAX_FILINGS_TO_PROCESS} relevant filings). Stopping search.")
-                 break # Stop iterating through filings
+                 break
 
+            period = "N/A"
             try:
                 filing_date_str = filing_dates[i]
                 filing_date = datetime.strptime(filing_date_str, "%Y-%m-%d")
@@ -422,36 +457,35 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
                 if period.startswith("FY"): year_suffix = int(period[2:])
                 elif "Q" in period: year_suffix = int(period.split("Q")[-1])
 
-                # Filter 2: Year Cutoff
-                if 0 <= year_suffix < EARLIEST_FISCAL_YEAR_SUFFIX:
-                    continue # Skip older filings
+                if 0 <= year_suffix < EARLIEST_FISCAL_YEAR_SUFFIX: continue
+                if year_suffix == EARLIEST_FISCAL_YEAR_SUFFIX and form == "10-Q": continue
 
-                # Filter 3: Special FY17 Handling
-                if year_suffix == EARLIEST_FISCAL_YEAR_SUFFIX and form == "10-Q":
-                    continue # Skip FY17 10-Qs
+                processed_relevant_count += 1
 
-                # --- If filters passed, increment count and add task ---
-                processed_relevant_count += 1 # Increment counter only for filings passing filters
-
-                accession_raw = accession_numbers[i]
                 accession_clean = accession_raw.replace('-', '')
                 doc_filename = primary_documents[i]
                 if not doc_filename:
                     log_lines.append(f"Warning: Skipping filing {accession_raw} due to missing primary document name.")
+                    processed_relevant_count -= 1
                     continue
                 doc_url = f"{archive_base_url}{accession_clean}/{doc_filename}"
+
+                # --- Create specific directory for this filing ---
+                filing_output_dir = os.path.join(tmp_dir, f"filing_{accession_clean}")
+                os.makedirs(filing_output_dir, exist_ok=True) # Create dir if needed
 
                 tasks_to_submit.append({
                     "doc_url": doc_url, "cik": cik_padded, "form": form, "date": filing_date_str,
                     "accession": accession_clean, "ticker": ticker, "fy_month": fy_month,
-                    "fy_adjust": fy_adjust, "cleanup_flag": cleanup_flag, "output_dir": tmp_dir
+                    "fy_adjust": fy_adjust, "cleanup_flag": cleanup_flag,
+                    "filing_output_dir": filing_output_dir # Pass specific dir
                 })
 
             except (ValueError, TypeError) as e:
-                 log_lines.append(f"Warning: Skipping filing {accession_numbers[i]} due to parsing error (Period: {period}, Error: {e}).")
+                 log_lines.append(f"Warning: Skipping filing {accession_raw} due to parsing error (Period: {period}, Error: {e}).")
                  continue
             except Exception as e:
-                 log_lines.append(f"Warning: Skipping filing {accession_numbers[i]} due to unexpected error during filtering: {e}.")
+                 log_lines.append(f"Warning: Skipping filing {accession_raw} due to unexpected error during filtering: {e}.")
                  continue
 
         log_lines.append(f"Identified {len(tasks_to_submit)} filings matching criteria (up to limit of {MAX_FILINGS_TO_PROCESS}) to process.")
@@ -462,17 +496,26 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
         # --- Execute Tasks in Parallel ---
         processed_success_count = 0
         with ThreadPoolExecutor(max_workers=4) as executor:
+            # Pass log_lines list - append is generally thread-safe
             futures = {executor.submit(download_and_process, log_lines=log_lines, **task_details): task_details
                        for task_details in tasks_to_submit}
+
             for future in as_completed(futures):
                 task_info = futures[future]
+                acc = task_info.get('accession','N/A')
+                frm = task_info.get('form','N/A')
+                log_lines.append(f"--- Attempting to get result for {frm} {acc} ---")
                 try:
                     form_type, pdf_path = future.result()
                     if pdf_path and form_type in pdf_files:
+                        # pdf_path is now the full path including the filing_output_dir
                         pdf_files[form_type].append(pdf_path)
                         processed_success_count += 1
+                        log_lines.append(f"--- Successfully processed {frm} {acc} ---")
+                    else:
+                         log_lines.append(f"--- Task completed for {frm} {acc} but no PDF generated ---")
                 except Exception as e:
-                    log_lines.append(f"ERROR: Task failed for {task_info.get('form','N/A')} {task_info.get('accession','N/A')}: {str(e)}")
+                    log_lines.append(f"--- ERROR retrieving result for {frm} {acc}: {str(e)} ---")
 
     except KeyError as e:
         log_lines.append(f"ERROR: Data format error in submissions JSON (Missing key: {e}).")
@@ -486,11 +529,12 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
     log_lines.append(f"Processing complete. Successfully generated {total_generated} PDF(s) ({len(pdf_files['10-K'])} 10-K, {len(pdf_files['10-Q'])} 10-Q).")
     return pdf_files
 
-# create_zip_archive function remains the same
-def create_zip_archive(pdf_files, cik, log_lines, tmp_dir):
+
+# --- MODIFIED create_zip_archive function ---
+def create_zip_archive(pdf_files, cik, log_lines, tmp_dir): # tmp_dir is the base temp dir
     """
-    Creates a ZIP archive named '<CIK>.zip' containing the generated PDF files,
-    organized into subfolders '10-K' and '10-Q'.
+    Creates a ZIP archive named '<CIK>.zip' containing the generated PDF files
+    from their respective subdirectories.
     """
     total_pdfs = sum(len(paths) for paths in pdf_files.values())
     if not total_pdfs:
@@ -498,20 +542,22 @@ def create_zip_archive(pdf_files, cik, log_lines, tmp_dir):
         return None
 
     zip_filename = f"{cik}.zip"
-    zip_path = os.path.join(tmp_dir, zip_filename)
+    zip_path = os.path.join(tmp_dir, zip_filename) # Create zip in base temp dir
     log_lines.append(f"Creating ZIP archive '{zip_filename}' with {total_pdfs} PDF(s)...")
     added_count = 0
     try:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for form_type, paths in pdf_files.items():
                 if not paths: continue
-                for pdf_path in paths:
-                    if pdf_path and os.path.exists(pdf_path):
-                        arcname = os.path.join(form_type, os.path.basename(pdf_path))
-                        zipf.write(pdf_path, arcname=arcname)
+                for pdf_full_path in paths: # pdf_full_path includes the filing subdir
+                    if pdf_full_path and os.path.exists(pdf_full_path):
+                        # Create arcname relative to the filing type folder
+                        # e.g., "10-K/NVDA_FY23.pdf"
+                        arcname = os.path.join(form_type, os.path.basename(pdf_full_path))
+                        zipf.write(pdf_full_path, arcname=arcname)
                         added_count += 1
                     else:
-                         log_lines.append(f"Warning: Skipping missing/invalid PDF path during zipping: {pdf_path}")
+                         log_lines.append(f"Warning: Skipping missing/invalid PDF path during zipping: {pdf_full_path}")
 
         if added_count == total_pdfs:
              log_lines.append(f"ZIP archive '{zip_filename}' created successfully.")
@@ -527,12 +573,12 @@ def create_zip_archive(pdf_files, cik, log_lines, tmp_dir):
         return None
 
 # -------------------------
-# Streamlit UI (Layout and Widgets)
+# Streamlit UI (Remains Mostly Unchanged)
 # -------------------------
 st.set_page_config(page_title="Mzansi EDGAR Fetcher", layout="wide")
 st.title("📈 Mzansi EDGAR Fetcher")
 
-# Modified description to mention the limit
+# Description mentioning the limit
 st.write(f"Fetch SEC 10-K and 10-Q filings (FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K and subsequent filings, up to {MAX_FILINGS_TO_PROCESS} total), convert them to PDF using WeasyPrint, and download as a ZIP archive named `<CIK>.zip`.")
 st.markdown(f"""
     **Instructions:**
@@ -591,16 +637,17 @@ if submitted:
         ticker_clean = ticker_input.strip().upper() if ticker_input else "" # Standardize ticker
 
         st.info(f"Processing request for CIK: {cik_clean}...")
-        # Expander to show logs, initially collapsed
-        log_container = st.expander("Show Process Log", expanded=False)
+        # Expander to show logs, expanded by default
+        log_container = st.expander("Show Process Log", expanded=True)
         log_lines = [] # Initialize log list for this specific run
 
         # Use a temporary directory for all intermediate files (HTML, assets, PDF, ZIP)
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            log_lines.append(f"Using temporary directory: {tmp_dir}")
-            # --- Updated spinner text to reflect limit ---
+        with tempfile.TemporaryDirectory() as tmp_dir: # tmp_dir is the base temp directory
+            log_lines.append(f"Using base temporary directory: {tmp_dir}")
+            # Updated spinner text
             with st.spinner(f"Fetching data (up to {MAX_FILINGS_TO_PROCESS}), converting files into PDF, and creating ZIP"):
                 # --- Call the main processing function ---
+                # tmp_dir is passed as the base directory for creating subdirectories
                 pdf_files_dict = process_filing(
                     cik=cik_clean,
                     ticker=ticker_clean,
@@ -613,6 +660,7 @@ if submitted:
 
                 # --- Create and Offer ZIP Download if PDFs were generated ---
                 if any(pdf_files_dict.values()): # Check if the dictionary contains any PDF paths
+                    # Pass the base tmp_dir for creating the zip file
                     zip_path = create_zip_archive(
                         pdf_files=pdf_files_dict,
                         cik=cik_clean, # Pass CIK for the zip filename
@@ -645,10 +693,11 @@ if submitted:
                     st.warning("⚠️ No relevant filings were successfully processed into PDFs based on the criteria.")
 
         # Display the collected log output inside the expander
+        # Ensure log is updated even if spinner finishes early due to error
         with log_container:
-            st.text_area("Log Output:", "\n".join(log_lines), height=400)
+            st.text_area("Log Output:", "\n".join(log_lines), height=400, key="log_output_area")
 
 # --- Footer ---
 st.markdown("---")
 # Updated caption to mention limit
-st.caption(f"Mzansi EDGAR Fetcher v1.5 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
+st.caption(f"Mzansi EDGAR Fetcher v1.8 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
