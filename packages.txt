@@ -1,8 +1,8 @@
-streamlit
-requests
-beautifulsoup4
-weasyprint
-lxml
-pandas
-fpdf
-html5lib
+# packages.txt
+# Dependencies required for WeasyPrint PDF generation
+libpango-1.0-0
+libcairo2
+libpangocairo-1.0-0
+libgdk-pixbuf2.0-0
+libffi-dev
+shared-mime-info
