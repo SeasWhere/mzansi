@@ -1,7 +1,0 @@
-lxml
-pandas
-fpdf
-streamlit>=1.22.0
-requests>=2.28.2
-beautifulsoup4>=4.11.2
-html5lib>=1.1
