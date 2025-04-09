@@ -573,13 +573,13 @@ def create_zip_archive(pdf_files, cik, log_lines, tmp_dir): # tmp_dir is the bas
         return None
 
 # -------------------------
-# Streamlit UI (Remains Mostly Unchanged)
+# Streamlit UI (Layout and Widgets)
 # -------------------------
 st.set_page_config(page_title="Mzansi EDGAR Fetcher", layout="wide")
 st.title("📈 Mzansi EDGAR Fetcher")
 
-# Description mentioning the limit
-st.write(f"Fetch SEC 10-K and 10-Q filings (FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K and subsequent filings, up to {MAX_FILINGS_TO_PROCESS} total), convert them to PDF using WeasyPrint, and download as a ZIP archive named `<CIK>.zip`.")
+# --- REMOVED st.write() line as requested ---
+
 st.markdown(f"""
     **Instructions:**
     1.  Enter the company's Central Index Key (CIK). [Find CIK here](https://www.sec.gov/edgar/searchedgar/cik).
@@ -701,3 +701,4 @@ if submitted:
 st.markdown("---")
 # Updated caption to mention limit
 st.caption(f"Mzansi EDGAR Fetcher v1.8 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
+
