@@ -43,7 +43,7 @@ except Exception as e:
 # -------------------------
 HEADERS = {
     # User agent includes contact info as requested by SEC best practices
-    'User-Agent': 'Mzansi EDGAR Viewer v2.0 (support@example.com)' # Version bump
+    'User-Agent': 'Mzansi EDGAR Viewer v2.1 (support@example.com)' # Version bump
 }
 
 session = requests.Session()
@@ -219,7 +219,7 @@ def download_assets(soup, base_url, filing_output_dir, log_lines): # Accepts spe
 def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, fy_adjust, log_lines):
     """
     Converts the local HTML file (with updated asset links) to PDF using WeasyPrint.
-    Applies custom CSS to control page margins.
+    Applies custom CSS to control page margins and set base font style.
     """
     pdf_path = None
     try:
@@ -232,25 +232,33 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
         pdf_path = os.path.join(os.path.dirname(html_path), pdf_filename)
         # log_lines.append(f"Attempting PDF conversion with WeasyPrint: {pdf_filename}")
 
-        # WeasyPrint uses base_url derived from html_path to find relative assets
         html_dir_url = 'file://' + os.path.dirname(os.path.abspath(html_path)) + '/'
         html = HTML(filename=html_path, base_url=html_dir_url)
 
-        # --- Define CSS for PDF page margins ---
-        # Adjust margin values as needed (e.g., '0.5cm', '10mm')
-        page_margin_css = """
+        # --- Define CSS for PDF page margins and base font ---
+        # Use a smaller top margin and set a default serif font
+        # Use 'pt' for font size as it's common for print/PDF
+        styling_css_string = """
         @page {
-            margin-top: 1cm;
+            margin-top: 0.5cm; /* Reduced top margin */
             margin-bottom: 1cm;
             margin-left: 1cm;
             margin-right: 1cm;
         }
+        body {
+            font-family: serif; /* Use generic serif (like Times New Roman) */
+            font-size: 11pt;   /* Common document font size */
+            line-height: 1.3;  /* Adjust line spacing if needed */
+        }
+        /* Add other base styles if necessary, e.g., for tables */
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 4px; text-align: left; }
         """
-        page_css = CSS(string=page_margin_css)
-        # -----------------------------------------
+        styling_css = CSS(string=styling_css_string)
+        # ----------------------------------------------------
 
-        # Render the PDF, applying the custom page margin CSS
-        html.write_pdf(pdf_path, stylesheets=[page_css]) # Pass the CSS object
+        # Render the PDF, applying the custom CSS
+        html.write_pdf(pdf_path, stylesheets=[styling_css]) # Pass the CSS object
 
         if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 100:
             log_lines.append(f"PDF created: {pdf_filename}")
@@ -710,5 +718,5 @@ if submitted:
 # --- Footer ---
 st.markdown("---")
 # Updated caption to mention limit
-st.caption(f"Mzansi EDGAR Fetcher v1.9 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
+st.caption(f"Mzansi EDGAR Fetcher v2.1 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
 
