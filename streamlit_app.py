@@ -32,7 +32,8 @@ except ModuleNotFoundError:
     st.error("Error: `weasyprint` not found. Please add it to requirements.txt")
     st.stop()
 except Exception as e:
-    st.error(f"Error importing WeasyPrint: {e}. Ensure system dependencies are listed in packages.txt (see instructions).")
+    # Catch potential import errors if system dependencies are missing
+    st.error(f"Error importing WeasyPrint: {e}. Ensure system dependencies are listed in packages.txt (see deployment instructions).")
     st.stop()
 # --- End WeasyPrint Import ---
 
@@ -244,8 +245,7 @@ def download_assets(soup, base_url, output_dir, log_lines):
         log_lines.append(f"Processed {len(downloaded_assets_filenames)} unique local asset files for this filing.")
     return list(downloaded_assets_filenames)
 
-
-# --- UPDATED convert_to_pdf function using WeasyPrint ---
+# convert_to_pdf function remains the same (using WeasyPrint)
 def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, fy_adjust, log_lines):
     """
     Converts the local HTML file (with updated asset links) to PDF using WeasyPrint.
@@ -277,9 +277,6 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
         html = HTML(filename=html_path, base_url=html_dir_url)
 
         # Render the PDF to the target path
-        # Note: You could potentially add stylesheets explicitly using CSS(filename=...)
-        # and passing them to write_pdf(stylesheets=[...]), but relying on <link> tags
-        # and base_url is often sufficient and simpler.
         html.write_pdf(pdf_path)
 
         # --- Check Conversion Result ---
@@ -309,7 +306,6 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
             except OSError as e_clean: log_lines.append(f"Warning: Could not remove failed PDF {pdf_filename} during cleanup: {e_clean}")
         return None
 
-
 # cleanup_files function remains the same
 def cleanup_files(html_path, assets, output_dir, log_lines):
     """Removes the temporary HTML file and downloaded asset files."""
@@ -336,8 +332,7 @@ def cleanup_files(html_path, assets, output_dir, log_lines):
     except Exception as e:
         log_lines.append(f"ERROR: Exception during file cleanup: {str(e)}")
 
-
-# download_and_process function remains the same (calls the new convert_to_pdf)
+# download_and_process function remains the same
 def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, output_dir):
     """
     Worker function: Downloads HTML, downloads assets, updates links, converts to PDF, optionally cleans up.
@@ -423,7 +418,6 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
 
     # Return None for pdf_path if control reaches here (due to an exception)
     return (form, None)
-
 
 # process_filing function remains the same (uses continue logic)
 def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tmp_dir):
@@ -590,7 +584,6 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
     log_lines.append(f"Processing complete. Successfully generated {total_generated} PDF(s) ({len(pdf_files['10-K'])} 10-K, {len(pdf_files['10-Q'])} 10-Q).")
     return pdf_files
 
-
 # create_zip_archive function remains the same
 def create_zip_archive(pdf_files, cik, log_lines, tmp_dir):
     """
@@ -654,15 +647,7 @@ st.markdown(f"""
     6.  (Optional) Check the box to delete intermediate HTML files after conversion.
     7.  Check the process log for details, especially if PDF quality is unexpected or errors occur.
 """)
-# Add note about WeasyPrint limitations and packages.txt requirement
-st.warning("""
-    **Important:** This version uses WeasyPrint for PDF conversion, which requires system packages.
-    For deployment on Streamlit Cloud, you **must** add a `packages.txt` file to your repository.
-    See deployment instructions.
-    """)
-st.markdown("""
-    *Note: PDF quality depends on WeasyPrint's rendering capabilities. Complex layouts or modern CSS may not render perfectly.*
-    """)
+# --- Removed WeasyPrint specific warnings as requested ---
 
 # --- Input Form ---
 with st.form("filing_form"):
@@ -676,7 +661,8 @@ with st.form("filing_form"):
         fy_month_input = st.selectbox(
             "Fiscal Year-End Month:",
             options=list(month_options.keys()),
-            format_func=lambda x: f"{month_options[x]} ({x})",
+            # --- Updated format_func to show only month name ---
+            format_func=lambda x: month_options[x],
             index=11, # Default to December (12)
             key="fy_month"
         )
@@ -718,8 +704,8 @@ if submitted:
         # This directory is automatically cleaned up when the 'with' block exits
         with tempfile.TemporaryDirectory() as tmp_dir:
             log_lines.append(f"Using temporary directory: {tmp_dir}")
-            # Show a spinner while processing occurs
-            with st.spinner(f"Fetching data (from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards), converting files with WeasyPrint, and creating ZIP..."):
+            # --- MODIFIED Spinner Text ---
+            with st.spinner("Fetching data, converting files into PDF, and creating ZIP"):
                 # --- Call the main processing function ---
                 pdf_files_dict = process_filing(
                     cik=cik_clean,
