@@ -43,7 +43,7 @@ except Exception as e:
 # -------------------------
 HEADERS = {
     # User agent includes contact info as requested by SEC best practices
-    'User-Agent': 'Mzansi EDGAR Viewer v2.2 (support@example.com)' # Version bump
+    'User-Agent': 'Mzansi EDGAR Viewer v2.3 (support@example.com)' # Version bump
 }
 
 session = requests.Session()
@@ -219,7 +219,7 @@ def download_assets(soup, base_url, filing_output_dir, log_lines): # Accepts spe
 def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, fy_adjust, log_lines):
     """
     Converts the local HTML file to PDF using WeasyPrint.
-    Applies custom CSS to control page margins, set base font, and add page numbers.
+    Applies custom CSS to control page margins, set EB Garamond font, and add page numbers.
     """
     pdf_path = None
     try:
@@ -235,40 +235,42 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
         html_dir_url = 'file://' + os.path.dirname(os.path.abspath(html_path)) + '/'
         html = HTML(filename=html_path, base_url=html_dir_url)
 
-        # --- Define CSS for PDF page margins, base font, and page numbers ---
-        # IMPORTANT: Assumes 'OldRomanRegular.ttf' is in a 'fonts' subdirectory
-        #            relative to where this script runs. Adjust path if needed.
+        # --- Define CSS for PDF page margins, EB Garamond font, and page numbers ---
+        # IMPORTANT: Assumes 'EBGaramond-Regular.ttf' (or similar) is in a 'fonts' subdirectory.
+        #            Verify the filename and adjust the url() path if needed.
         styling_css_string = """
-        /* Embed the custom font - requires the font file in the repo */
+        /* Embed the EB Garamond font */
         @font-face {
-            font-family: "Old Roman Regular";
-            /* Adjust src url() if font file is elsewhere or named differently */
-            src: url('fonts/OldRomanRegular.ttf') format('truetype');
+            font-family: "EB Garamond";
+            /* Verify this filename matches the font file you added */
+            src: url('fonts/EBGaramond-Regular.ttf') format('truetype');
             font-weight: normal;
             font-style: normal;
         }
+        /* You might need additional @font-face rules for Bold, Italic, etc. if used */
+        /* e.g., src: url('fonts/EBGaramond-Bold.ttf'); font-weight: bold; */
 
         /* Define page layout */
         @page {
-            margin-top: 0.8cm; /* Further reduced top margin */
-            margin-bottom: 1.5cm; /* Increased bottom margin slightly for footer */
+            margin-top: 0.8cm; /* Keep reduced top margin */
+            margin-bottom: 1.5cm; /* Keep margin for footer */
             margin-left: 1cm;
             margin-right: 1cm;
 
-            /* Add page number in the bottom center */
+            /* Add page number in the bottom center using EB Garamond */
             @bottom-center {
-                content: "Page " counter(page) " of " counter(pages); /* Standard page X of Y */
-                font-family: "Old Roman Regular", serif; /* Use the custom font */
-                font-size: 9pt; /* Slightly smaller font for footer */
-                color: #555; /* Grey color for footer text */
-                vertical-align: top; /* Align text towards the top of the margin box */
-                padding-top: 5mm; /* Add some padding above the page number */
+                content: "Page " counter(page) " of " counter(pages);
+                font-family: "EB Garamond", serif; /* Use EB Garamond */
+                font-size: 9pt;
+                color: #555;
+                vertical-align: top;
+                padding-top: 5mm;
             }
         }
 
-        /* Set base body font */
+        /* Set base body font to EB Garamond */
         body {
-            font-family: "Old Roman Regular", serif; /* Use custom font, fallback to generic serif */
+            font-family: "EB Garamond", serif; /* Use EB Garamond, fallback to generic serif */
             font-size: 11pt;   /* Adjust base font size as needed */
             line-height: 1.3;
         }
@@ -316,8 +318,8 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
     except Exception as e:
         log_lines.append(f"ERROR: WeasyPrint PDF conversion failed for {accession} ({os.path.basename(html_path)}): {str(e)}")
         # Check if it's a font loading error
-        if "font" in str(e).lower():
-             log_lines.append("Hint: Check if the font file ('fonts/OldRomanRegular.ttf') exists and the path in the CSS is correct.")
+        if "font" in str(e).lower() or "EBGaramond" in str(e):
+             log_lines.append("Hint: Check if the font file ('fonts/EBGaramond-Regular.ttf') exists and the path/filename in the CSS is correct.")
         log_lines.append(traceback.format_exc(limit=1))
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
@@ -748,5 +750,5 @@ if submitted:
 # --- Footer ---
 st.markdown("---")
 # Updated caption to mention limit
-st.caption(f"Mzansi EDGAR Fetcher v2.2 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
+st.caption(f"Mzansi EDGAR Fetcher v2.3 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
 
