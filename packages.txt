@@ -1,5 +1,3 @@
-# packages.txt
-# Dependencies required for WeasyPrint PDF generation
 libpango-1.0-0
 libcairo2
 libpangocairo-1.0-0
