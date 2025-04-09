@@ -1,8 +1,7 @@
-lxml
-pandas
-fpdf
+# requirements.txt
 streamlit
 requests
 beautifulsoup4
-html5lib
 weasyprint
+lxml # Recommended parser for BeautifulSoup
+html5lib # Alternative parser for BeautifulSoup
