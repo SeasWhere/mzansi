@@ -43,7 +43,7 @@ except Exception as e:
 # -------------------------
 HEADERS = {
     # User agent includes contact info as requested by SEC best practices
-    'User-Agent': 'Mzansi EDGAR Viewer v1.8 (support@example.com)' # Version bump
+    'User-Agent': 'Mzansi EDGAR Viewer v1.9 (support@example.com)' # Version bump
 }
 
 session = requests.Session()
@@ -53,8 +53,8 @@ DEFAULT_TIMEOUT = 20  # Timeout for individual HTTP requests in seconds
 # --- Scope Control ---
 # Fiscal Year cutoff: Process filings from this year onwards.
 EARLIEST_FISCAL_YEAR_SUFFIX = 17
-# --- Limit to Prevent Resource Exhaustion ---
-MAX_FILINGS_TO_PROCESS = 25 # Limit the number of relevant filings processed
+# --- Limit to Prevent Resource Exhaustion (Set low for testing) ---
+MAX_FILINGS_TO_PROCESS = 5 # Limit the number of relevant filings processed
 # ----------------------------------
 
 
@@ -385,7 +385,7 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
     return (form, None) # Return None if error occurred
 
 
-# --- MODIFIED process_filing function ---
+# --- MODIFIED process_filing function (with fix for UnboundLocalError) ---
 def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tmp_dir): # tmp_dir is now base dir
     """
     Main orchestrator: Fetches EDGAR index, filters filings, creates subdirs,
@@ -447,11 +447,12 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
                  log_lines.append(f"Reached processing limit ({MAX_FILINGS_TO_PROCESS} relevant filings). Stopping search.")
                  break
 
+            # --- Initialize period before try block ---
             period = "N/A"
             try:
                 filing_date_str = filing_dates[i]
                 filing_date = datetime.strptime(filing_date_str, "%Y-%m-%d")
-                period = get_filing_period(form, filing_date, fy_month, fy_adjust)
+                period = get_filing_period(form, filing_date, fy_month, fy_adjust) # Assign period here
 
                 year_suffix = -1
                 if period.startswith("FY"): year_suffix = int(period[2:])
@@ -482,6 +483,7 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
                 })
 
             except (ValueError, TypeError) as e:
+                 # Now 'period' will be defined (either "N/A" or the calculated value if error occurred later)
                  log_lines.append(f"Warning: Skipping filing {accession_raw} due to parsing error (Period: {period}, Error: {e}).")
                  continue
             except Exception as e:
@@ -578,8 +580,7 @@ def create_zip_archive(pdf_files, cik, log_lines, tmp_dir): # tmp_dir is the bas
 st.set_page_config(page_title="Mzansi EDGAR Fetcher", layout="wide")
 st.title("📈 Mzansi EDGAR Fetcher")
 
-# --- REMOVED st.write() line as requested ---
-
+# Description mentioning the limit
 st.markdown(f"""
     **Instructions:**
     1.  Enter the company's Central Index Key (CIK). [Find CIK here](https://www.sec.gov/edgar/searchedgar/cik).
@@ -644,7 +645,7 @@ if submitted:
         # Use a temporary directory for all intermediate files (HTML, assets, PDF, ZIP)
         with tempfile.TemporaryDirectory() as tmp_dir: # tmp_dir is the base temp directory
             log_lines.append(f"Using base temporary directory: {tmp_dir}")
-            # Updated spinner text
+            # Updated spinner text to reflect new limit
             with st.spinner(f"Fetching data (up to {MAX_FILINGS_TO_PROCESS}), converting files into PDF, and creating ZIP"):
                 # --- Call the main processing function ---
                 # tmp_dir is passed as the base directory for creating subdirectories
@@ -700,5 +701,5 @@ if submitted:
 # --- Footer ---
 st.markdown("---")
 # Updated caption to mention limit
-st.caption(f"Mzansi EDGAR Fetcher v1.8 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
+st.caption(f"Mzansi EDGAR Fetcher v1.9 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
 
