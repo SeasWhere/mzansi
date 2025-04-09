@@ -43,7 +43,7 @@ except Exception as e:
 # -------------------------
 HEADERS = {
     # User agent includes contact info as requested by SEC best practices
-    'User-Agent': 'Mzansi EDGAR Viewer v1.9 (support@example.com)' # Version bump
+    'User-Agent': 'Mzansi EDGAR Viewer v2.0 (support@example.com)' # Version bump
 }
 
 session = requests.Session()
@@ -53,8 +53,8 @@ DEFAULT_TIMEOUT = 20  # Timeout for individual HTTP requests in seconds
 # --- Scope Control ---
 # Fiscal Year cutoff: Process filings from this year onwards.
 EARLIEST_FISCAL_YEAR_SUFFIX = 17
-# --- Limit to Prevent Resource Exhaustion (Set low for testing) ---
-MAX_FILINGS_TO_PROCESS = 5 # Limit the number of relevant filings processed
+# --- Limit to Prevent Resource Exhaustion ---
+MAX_FILINGS_TO_PROCESS = 5 # Limit the number of relevant filings processed (low for testing)
 # ----------------------------------
 
 
@@ -215,11 +215,11 @@ def download_assets(soup, base_url, filing_output_dir, log_lines): # Accepts spe
     #     log_lines.append(f"Processed {len(downloaded_assets_filenames)} asset file(s).")
     return list(downloaded_assets_filenames)
 
-# convert_to_pdf function remains the same (WeasyPrint base_url handles relative paths)
+# --- MODIFIED convert_to_pdf function ---
 def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, fy_adjust, log_lines):
     """
     Converts the local HTML file (with updated asset links) to PDF using WeasyPrint.
-    Assumes HTML file and its assets are in the same directory.
+    Applies custom CSS to control page margins.
     """
     pdf_path = None
     try:
@@ -228,7 +228,6 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
         base_name = f"{ticker}_{period}" if ticker else f"{cik}_{period}"
         safe_base_name = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in base_name).strip('._')
         if not safe_base_name: safe_base_name = f"{cik}_{accession}"
-        # --- Save PDF in the same directory as the HTML ---
         pdf_filename = f"{safe_base_name}.pdf"
         pdf_path = os.path.join(os.path.dirname(html_path), pdf_filename)
         # log_lines.append(f"Attempting PDF conversion with WeasyPrint: {pdf_filename}")
@@ -236,11 +235,26 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
         # WeasyPrint uses base_url derived from html_path to find relative assets
         html_dir_url = 'file://' + os.path.dirname(os.path.abspath(html_path)) + '/'
         html = HTML(filename=html_path, base_url=html_dir_url)
-        html.write_pdf(pdf_path)
+
+        # --- Define CSS for PDF page margins ---
+        # Adjust margin values as needed (e.g., '0.5cm', '10mm')
+        page_margin_css = """
+        @page {
+            margin-top: 1cm;
+            margin-bottom: 1cm;
+            margin-left: 1cm;
+            margin-right: 1cm;
+        }
+        """
+        page_css = CSS(string=page_margin_css)
+        # -----------------------------------------
+
+        # Render the PDF, applying the custom page margin CSS
+        html.write_pdf(pdf_path, stylesheets=[page_css]) # Pass the CSS object
 
         if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 100:
             log_lines.append(f"PDF created: {pdf_filename}")
-            return pdf_path # Return the full path to the PDF
+            return pdf_path
         else:
             log_lines.append(f"ERROR: WeasyPrint conversion resulted in missing or near-empty file: {pdf_filename}")
             if os.path.exists(pdf_path):
@@ -281,11 +295,6 @@ def cleanup_files(html_path, assets, filing_output_dir, log_lines): # Accepts sp
                     cleaned_count += 1
                 except OSError as e:
                      log_lines.append(f"Warning: Error cleaning asset {asset_filename}: {e}")
-
-        # Optionally remove the filing-specific directory itself if empty,
-        # but relying on TemporaryDirectory cleanup is safer/simpler.
-        # if not os.listdir(filing_output_dir):
-        #     os.rmdir(filing_output_dir)
 
         if cleaned_count > 0:
             log_lines.append(f"Cleaned {cleaned_count} intermediate file(s) for this filing.")
