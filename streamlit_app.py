@@ -807,4 +807,3 @@ if submitted:
 # Add a footer or additional info if desired
 st.markdown("---")
 st.caption(f"Mzansi EDGAR Fetcher v1.1 | Data sourced from SEC EDGAR | Processing limited to {MAX_FILINGS_TO_PROCESS} filings, stopping before FY{EARLIEST_FISCAL_YEAR_SUFFIX}.")
-```
