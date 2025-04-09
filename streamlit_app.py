@@ -43,7 +43,7 @@ except Exception as e:
 # -------------------------
 HEADERS = {
     # User agent includes contact info as requested by SEC best practices
-    'User-Agent': 'Mzansi EDGAR Viewer v2.1 (support@example.com)' # Version bump
+    'User-Agent': 'Mzansi EDGAR Viewer v2.2 (support@example.com)' # Version bump
 }
 
 session = requests.Session()
@@ -218,8 +218,8 @@ def download_assets(soup, base_url, filing_output_dir, log_lines): # Accepts spe
 # --- MODIFIED convert_to_pdf function ---
 def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, fy_adjust, log_lines):
     """
-    Converts the local HTML file (with updated asset links) to PDF using WeasyPrint.
-    Applies custom CSS to control page margins and set base font style.
+    Converts the local HTML file to PDF using WeasyPrint.
+    Applies custom CSS to control page margins, set base font, and add page numbers.
     """
     pdf_path = None
     try:
@@ -235,30 +235,67 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
         html_dir_url = 'file://' + os.path.dirname(os.path.abspath(html_path)) + '/'
         html = HTML(filename=html_path, base_url=html_dir_url)
 
-        # --- Define CSS for PDF page margins and base font ---
-        # Use a smaller top margin and set a default serif font
-        # Use 'pt' for font size as it's common for print/PDF
+        # --- Define CSS for PDF page margins, base font, and page numbers ---
+        # IMPORTANT: Assumes 'OldRomanRegular.ttf' is in a 'fonts' subdirectory
+        #            relative to where this script runs. Adjust path if needed.
         styling_css_string = """
+        /* Embed the custom font - requires the font file in the repo */
+        @font-face {
+            font-family: "Old Roman Regular";
+            /* Adjust src url() if font file is elsewhere or named differently */
+            src: url('fonts/OldRomanRegular.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        /* Define page layout */
         @page {
-            margin-top: 0.5cm; /* Reduced top margin */
-            margin-bottom: 1cm;
+            margin-top: 0.8cm; /* Further reduced top margin */
+            margin-bottom: 1.5cm; /* Increased bottom margin slightly for footer */
             margin-left: 1cm;
             margin-right: 1cm;
+
+            /* Add page number in the bottom center */
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages); /* Standard page X of Y */
+                font-family: "Old Roman Regular", serif; /* Use the custom font */
+                font-size: 9pt; /* Slightly smaller font for footer */
+                color: #555; /* Grey color for footer text */
+                vertical-align: top; /* Align text towards the top of the margin box */
+                padding-top: 5mm; /* Add some padding above the page number */
+            }
         }
+
+        /* Set base body font */
         body {
-            font-family: serif; /* Use generic serif (like Times New Roman) */
-            font-size: 11pt;   /* Common document font size */
-            line-height: 1.3;  /* Adjust line spacing if needed */
+            font-family: "Old Roman Regular", serif; /* Use custom font, fallback to generic serif */
+            font-size: 11pt;   /* Adjust base font size as needed */
+            line-height: 1.3;
         }
-        /* Add other base styles if necessary, e.g., for tables */
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ccc; padding: 4px; text-align: left; }
+
+        /* Optional: Basic table styling */
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 0.5em;
+            margin-bottom: 0.5em;
+         }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 4px 6px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+             background-color: #f2f2f2;
+             font-weight: bold;
+        }
         """
         styling_css = CSS(string=styling_css_string)
         # ----------------------------------------------------
 
         # Render the PDF, applying the custom CSS
-        html.write_pdf(pdf_path, stylesheets=[styling_css]) # Pass the CSS object
+        html.write_pdf(pdf_path, stylesheets=[styling_css])
 
         if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 100:
             log_lines.append(f"PDF created: {pdf_filename}")
@@ -278,6 +315,9 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
          return None
     except Exception as e:
         log_lines.append(f"ERROR: WeasyPrint PDF conversion failed for {accession} ({os.path.basename(html_path)}): {str(e)}")
+        # Check if it's a font loading error
+        if "font" in str(e).lower():
+             log_lines.append("Hint: Check if the font file ('fonts/OldRomanRegular.ttf') exists and the path in the CSS is correct.")
         log_lines.append(traceback.format_exc(limit=1))
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
@@ -325,10 +365,10 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
         log_lines.append(f"{log_prefix} Starting processing in {os.path.basename(filing_output_dir)}...")
         # --- Download Primary HTML Document ---
         time.sleep(0.11)
-        log_lines.append(f"{log_prefix} Downloading main HTML...")
+        # log_lines.append(f"{log_prefix} Downloading main HTML...")
         r = session.get(doc_url, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
-        log_lines.append(f"{log_prefix} Download complete.")
+        # log_lines.append(f"{log_prefix} Download complete.")
 
         # --- Save HTML in the specific filing's directory ---
         base_html_filename = f"{cik}_{form}_{date}_{accession}.htm"
@@ -345,9 +385,7 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
         # --- Pre-process & Parse HTML ---
         replacements = { "Â\x9d": "\"", "â€œ": "\"", "â€™": "'", "â€˜": "'", "â€“": "-", "â€”": "—", "&nbsp;": " ", "\u00a0": " " }
         for wrong, correct in replacements.items(): decoded_text = decoded_text.replace(wrong, correct)
-        # log_lines.append(f"{log_prefix} Parsing HTML...")
         soup = BeautifulSoup(decoded_text, 'html.parser')
-        # log_lines.append(f"{log_prefix} HTML parsed.")
 
         # Ensure UTF-8 meta tag
         if not soup.find('meta', charset=True):
@@ -359,26 +397,18 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
             head.insert(0, meta_tag)
 
         # --- Download Assets into the specific filing's directory ---
-        # log_lines.append(f"{log_prefix} Downloading assets...")
         doc_base_url = urljoin(doc_url, '.')
         downloaded_assets = download_assets(soup, doc_base_url, filing_output_dir, log_lines) # Pass filing_output_dir
-        # log_lines.append(f"{log_prefix} Asset download finished.")
 
         # --- Save Processed HTML ---
-        # log_lines.append(f"{log_prefix} Saving processed HTML...")
         with open(html_path, 'w', encoding='utf-8') as f: f.write(str(soup))
-        # log_lines.append(f"{log_prefix} HTML saved.")
 
         # --- Convert to PDF ---
         log_lines.append(f"{log_prefix} Starting PDF conversion...")
         pdf_path = convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month, fy_adjust, log_lines)
-        if pdf_path:
-            log_lines.append(f"{log_prefix} PDF conversion successful.")
-        else:
-            log_lines.append(f"{log_prefix} PDF conversion failed.")
+        # PDF creation/failure logged within convert_to_pdf
 
         # --- Return PDF Path (or None) ---
-        # pdf_path will be inside the filing_output_dir
         return (form, pdf_path)
 
     # --- Error Handling ---
@@ -397,7 +427,7 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
         # Cleanup happens within the specific filing's directory
         if cleanup_flag:
             cleanup_files(html_path, downloaded_assets, filing_output_dir, log_lines) # Pass filing_output_dir
-        log_lines.append(f"{log_prefix} Processing finished.")
+        # log_lines.append(f"{log_prefix} Processing finished.") # Reduce log noise
 
     return (form, None) # Return None if error occurred
 
@@ -523,16 +553,16 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
                 task_info = futures[future]
                 acc = task_info.get('accession','N/A')
                 frm = task_info.get('form','N/A')
-                log_lines.append(f"--- Attempting to get result for {frm} {acc} ---")
+                # log_lines.append(f"--- Attempting to get result for {frm} {acc} ---") # Reduce log noise
                 try:
                     form_type, pdf_path = future.result()
                     if pdf_path and form_type in pdf_files:
                         # pdf_path is now the full path including the filing_output_dir
                         pdf_files[form_type].append(pdf_path)
                         processed_success_count += 1
-                        log_lines.append(f"--- Successfully processed {frm} {acc} ---")
-                    else:
-                         log_lines.append(f"--- Task completed for {frm} {acc} but no PDF generated ---")
+                        # log_lines.append(f"--- Successfully processed {frm} {acc} ---") # Reduce log noise
+                    # else: # Reduce log noise
+                         # log_lines.append(f"--- Task completed for {frm} {acc} but no PDF generated ---")
                 except Exception as e:
                     log_lines.append(f"--- ERROR retrieving result for {frm} {acc}: {str(e)} ---")
 
@@ -718,5 +748,5 @@ if submitted:
 # --- Footer ---
 st.markdown("---")
 # Updated caption to mention limit
-st.caption(f"Mzansi EDGAR Fetcher v2.1 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
+st.caption(f"Mzansi EDGAR Fetcher v2.2 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches up to {MAX_FILINGS_TO_PROCESS} filings from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards.")
 
