@@ -21,18 +21,28 @@ except ModuleNotFoundError:
     st.error("Error: `beautifulsoup4` not found. Please add it to requirements.txt")
     st.stop()
 
+# --- Use WeasyPrint instead of xhtml2pdf ---
 try:
-    import xhtml2pdf.pisa as pisa
+    from weasyprint import HTML, CSS
+    from weasyprint.logger import LOGGER as weasyprint_logger
+    import logging
+    # Optional: Set WeasyPrint logging level (e.g., to ERROR to reduce noise)
+    weasyprint_logger.setLevel(logging.ERROR)
 except ModuleNotFoundError:
-    st.error("Error: `xhtml2pdf` not found. Please add it to requirements.txt")
+    st.error("Error: `weasyprint` not found. Please add it to requirements.txt")
     st.stop()
+except Exception as e:
+    st.error(f"Error importing WeasyPrint: {e}. Ensure system dependencies are listed in packages.txt (see instructions).")
+    st.stop()
+# --- End WeasyPrint Import ---
+
 
 # -------------------------
 # Global configuration
 # -------------------------
 HEADERS = {
     # User agent includes contact info as requested by SEC best practices
-    'User-Agent': 'Mzansi EDGAR Viewer v1.3 (support@example.com)' # Version bump
+    'User-Agent': 'Mzansi EDGAR Viewer v1.4 (support@example.com)' # Version bump
 }
 
 session = requests.Session()
@@ -43,7 +53,6 @@ DEFAULT_TIMEOUT = 20  # Timeout for individual HTTP requests in seconds
 # Fiscal Year cutoff: Process filings from this year onwards.
 # Filings *before* this year (e.g., FY16 if set to 17) will be skipped.
 EARLIEST_FISCAL_YEAR_SUFFIX = 17
-# MAX_FILINGS_TO_PROCESS was removed to fetch ALL filings from EARLIEST_FISCAL_YEAR_SUFFIX onwards.
 # ----------------------------------
 
 
@@ -51,6 +60,7 @@ EARLIEST_FISCAL_YEAR_SUFFIX = 17
 # Backend Functions
 # -------------------------
 
+# get_filing_period function remains the same
 def get_filing_period(form, filing_date, fiscal_year_end_month, fy_adjust):
     """
     Determines the fiscal period string (e.g., FY23, 1Q24) based on filing date and fiscal year end.
@@ -122,7 +132,7 @@ def get_filing_period(form, filing_date, fiscal_year_end_month, fy_adjust):
                 fiscal_year -= 1
             return f"FY{fiscal_year % 100:02d}"
 
-
+# download_assets function remains the same
 def download_assets(soup, base_url, output_dir, log_lines):
     """
     Downloads assets (images, CSS) linked in the HTML, saves them locally,
@@ -216,7 +226,7 @@ def download_assets(soup, base_url, output_dir, log_lines):
                     # log_lines.append(f"Downloaded asset: {safe_filename}") # Can make logs very verbose
 
                 # --- Update HTML Tag ---
-                # Update the attribute to the *relative* local filename for pisa's link_callback
+                # Update the attribute to the *relative* local filename for WeasyPrint's base_url
                 tag[url_attr] = safe_filename
                 downloaded_assets_filenames.add(safe_filename)
 
@@ -235,71 +245,49 @@ def download_assets(soup, base_url, output_dir, log_lines):
     return list(downloaded_assets_filenames)
 
 
+# --- UPDATED convert_to_pdf function using WeasyPrint ---
 def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, fy_adjust, log_lines):
     """
-    Converts the local HTML file (with updated asset links) to PDF using xhtml2pdf.
+    Converts the local HTML file (with updated asset links) to PDF using WeasyPrint.
 
-    NOTE: xhtml2pdf Limitations:
-    - This library is NOT a full web browser.
-    - Complex CSS (flexbox, grid, advanced selectors) may not render correctly.
-    - JavaScript-driven content WILL NOT be executed.
-    - PDF output may differ significantly from browser view for modern/complex filings.
-    - Check logs for errors if PDF generation fails or looks severely broken.
+    NOTE: WeasyPrint Limitations & Requirements:
+    - Requires external C libraries (Pango, Cairo, etc.) installed via packages.txt on Streamlit Cloud.
+    - Provides better CSS support than xhtml2pdf but is still not a full browser.
+    - Complex layouts and JavaScript WILL NOT be perfectly rendered.
+    - Check logs for errors if PDF generation fails.
     """
     pdf_path = None
     try:
-        # --- Generate PDF Filename ---
+        # --- Generate PDF Filename (same logic) ---
         filing_date = datetime.strptime(date, "%Y-%m-%d")
         period = get_filing_period(form, filing_date, fy_month_idx, fy_adjust)
         base_name = f"{ticker}_{period}" if ticker else f"{cik}_{period}"
-        # Sanitize filename further
         safe_base_name = "".join(c if c.isalnum() or c in ['_', '-'] else '_' for c in base_name).strip('._')
-        if not safe_base_name: safe_base_name = f"{cik}_{accession}" # Fallback
+        if not safe_base_name: safe_base_name = f"{cik}_{accession}"
         pdf_filename = f"{safe_base_name}.pdf"
         pdf_path = os.path.join(os.path.dirname(html_path), pdf_filename)
-        log_lines.append(f"Attempting PDF conversion: {pdf_filename}")
+        log_lines.append(f"Attempting PDF conversion with WeasyPrint: {pdf_filename}")
 
-        # --- Conversion using xhtml2pdf ---
-        with open(html_path, "r", encoding="utf-8") as source_html_file, \
-             open(pdf_path, "w+b") as result_file:
+        # --- Conversion using WeasyPrint ---
+        # We need to provide the base_url for WeasyPrint to find relative assets (CSS, images)
+        # The base_url should be the directory containing the HTML file.
+        html_dir_url = 'file://' + os.path.dirname(os.path.abspath(html_path)) + '/'
 
-            # Define callback to resolve local asset paths relative to the HTML file
-            base_dir = os.path.dirname(html_path)
-            def link_callback(uri, rel):
-                """ Resolve local file paths referenced in the HTML. """
-                # Construct potential absolute path for the local asset
-                potential_local_path = os.path.abspath(os.path.join(base_dir, uri))
-                # Security check: ensure it's within the temp directory
-                if potential_local_path.startswith(os.path.abspath(base_dir)):
-                    if os.path.exists(potential_local_path):
-                        return potential_local_path # Return path to local file
-                # Allow web links (http/https) - xhtml2pdf might handle some, but often fails
-                if urlparse(uri).scheme in ['http', 'https']:
-                     # log_lines.append(f"PDF Conversion: Passing web link to xhtml2pdf: {uri}")
-                     return uri
-                # Return original URI if not resolved locally (will likely fail in PDF)
-                return uri
+        # Create WeasyPrint HTML object from the local file path
+        html = HTML(filename=html_path, base_url=html_dir_url)
 
-            # Convert HTML to PDF
-            pisa_status = pisa.CreatePDF(
-                src=source_html_file,
-                dest=result_file,
-                encoding='utf-8',
-                link_callback=link_callback
-            )
+        # Render the PDF to the target path
+        # Note: You could potentially add stylesheets explicitly using CSS(filename=...)
+        # and passing them to write_pdf(stylesheets=[...]), but relying on <link> tags
+        # and base_url is often sufficient and simpler.
+        html.write_pdf(pdf_path)
 
         # --- Check Conversion Result ---
-        if pisa_status.err:
-            log_lines.append(f"ERROR: xhtml2pdf conversion failed for {pdf_filename}. Error code: {pisa_status.err}")
-            if os.path.exists(pdf_path): # Cleanup failed attempt
-                try: os.remove(pdf_path)
-                except OSError as e: log_lines.append(f"Warning: Could not remove failed PDF {pdf_filename}: {e}")
-            return None
-        elif os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 100: # Check exists and has some content (>100 bytes)
-            log_lines.append(f"PDF created successfully: {pdf_filename}")
+        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 100: # Check exists and has reasonable size
+            log_lines.append(f"PDF created successfully using WeasyPrint: {pdf_filename}")
             return pdf_path
         else:
-            log_lines.append(f"ERROR: xhtml2pdf conversion resulted in missing or near-empty file: {pdf_filename}")
+            log_lines.append(f"ERROR: WeasyPrint conversion resulted in missing or near-empty file: {pdf_filename}")
             if os.path.exists(pdf_path): # Remove empty/failed file
                  try: os.remove(pdf_path)
                  except OSError: pass
@@ -313,14 +301,16 @@ def convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month_idx, 
          log_lines.append(f"ERROR: Value error during PDF setup ({os.path.basename(html_path)}): {str(e)}")
          return None
     except Exception as e:
-        log_lines.append(f"ERROR: Unexpected error during PDF conversion ({os.path.basename(html_path)}): {str(e)}")
+        # Catch potential WeasyPrint errors (which can be varied)
+        log_lines.append(f"ERROR: Unexpected error during WeasyPrint PDF conversion ({os.path.basename(html_path)}): {str(e)}")
         log_lines.append(traceback.format_exc()) # Log full traceback
         if pdf_path and os.path.exists(pdf_path): # Cleanup potentially corrupt file
             try: os.remove(pdf_path)
-            except OSError as e: log_lines.append(f"Warning: Could not remove failed PDF {pdf_filename} during cleanup: {e}")
+            except OSError as e_clean: log_lines.append(f"Warning: Could not remove failed PDF {pdf_filename} during cleanup: {e_clean}")
         return None
 
 
+# cleanup_files function remains the same
 def cleanup_files(html_path, assets, output_dir, log_lines):
     """Removes the temporary HTML file and downloaded asset files."""
     cleaned_count = 0
@@ -347,6 +337,7 @@ def cleanup_files(html_path, assets, output_dir, log_lines):
         log_lines.append(f"ERROR: Exception during file cleanup: {str(e)}")
 
 
+# download_and_process function remains the same (calls the new convert_to_pdf)
 def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, output_dir):
     """
     Worker function: Downloads HTML, downloads assets, updates links, converts to PDF, optionally cleans up.
@@ -404,7 +395,7 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
         with open(html_path, 'w', encoding='utf-8') as f:
             f.write(str(soup))
 
-        # --- Convert to PDF ---
+        # --- Convert to PDF (Calls the updated function) ---
         pdf_path = convert_to_pdf(html_path, form, date, accession, cik, ticker, fy_month, fy_adjust, log_lines)
 
         # --- Return Result ---
@@ -434,7 +425,7 @@ def download_and_process(doc_url, cik, form, date, accession, ticker, fy_month, 
     return (form, None)
 
 
-# --- MODIFIED process_filing function ---
+# process_filing function remains the same (uses continue logic)
 def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tmp_dir):
     """
     Main orchestrator: Fetches EDGAR index, filters filings based on year/form,
@@ -525,16 +516,13 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
                 if period.startswith("FY"): year_suffix = int(period[2:])
                 elif "Q" in period: year_suffix = int(period.split("Q")[-1])
 
-                # --- UPDATED Filter Logic ---
+                # --- Filter Logic (Using continue) ---
                 # Filter 2: Year Cutoff (Skip filings *before* target year)
-                # Use CONTINUE instead of BREAK to ensure all list items are checked
                 if 0 <= year_suffix < EARLIEST_FISCAL_YEAR_SUFFIX:
-                    # log_lines.append(f"Skipping {period} (before FY{EARLIEST_FISCAL_YEAR_SUFFIX}).") # Optional log
                     continue # Skip this older filing and check the next one
 
                 # Filter 3: Special FY17 Handling (Skip 10-Qs from FY17)
                 if year_suffix == EARLIEST_FISCAL_YEAR_SUFFIX and form == "10-Q":
-                    # log_lines.append(f"Skipping {period} ({form}) as per FY{EARLIEST_FISCAL_YEAR_SUFFIX} rule.") # Optional log
                     continue # Skip this specific filing
 
                 # --- If all filters passed, add task details ---
@@ -572,7 +560,6 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
         # Using max_workers=4 as a balance between parallelism and resource usage/rate limits
         with ThreadPoolExecutor(max_workers=4) as executor:
             # Create future objects for submitted tasks
-            # Pass log_lines list to each worker (list.append is generally thread-safe in CPython)
             futures = {executor.submit(download_and_process, log_lines=log_lines, **task_details): task_details
                        for task_details in tasks_to_submit}
 
@@ -604,6 +591,7 @@ def process_filing(cik, ticker, fy_month, fy_adjust, cleanup_flag, log_lines, tm
     return pdf_files
 
 
+# create_zip_archive function remains the same
 def create_zip_archive(pdf_files, cik, log_lines, tmp_dir):
     """
     Creates a ZIP archive named '<CIK>.zip' containing the generated PDF files,
@@ -654,8 +642,8 @@ def create_zip_archive(pdf_files, cik, log_lines, tmp_dir):
 st.set_page_config(page_title="Mzansi EDGAR Fetcher", layout="wide")
 st.title("📈 Mzansi EDGAR Fetcher")
 
-# Updated description reflecting current logic
-st.write(f"Fetch SEC 10-K and 10-Q filings (FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K and all subsequent 10-Ks/10-Qs), convert them to PDF, and download as a ZIP archive named `<CIK>.zip`.")
+# Updated description reflecting current logic & WeasyPrint use
+st.write(f"Fetch SEC 10-K and 10-Q filings (FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K and all subsequent 10-Ks/10-Qs), convert them to PDF using WeasyPrint, and download as a ZIP archive named `<CIK>.zip`.")
 st.markdown(f"""
     **Instructions:**
     1.  Enter the company's Central Index Key (CIK). [Find CIK here](https://www.sec.gov/edgar/searchedgar/cik).
@@ -666,8 +654,14 @@ st.markdown(f"""
     6.  (Optional) Check the box to delete intermediate HTML files after conversion.
     7.  Check the process log for details, especially if PDF quality is unexpected or errors occur.
 """)
+# Add note about WeasyPrint limitations and packages.txt requirement
+st.warning("""
+    **Important:** This version uses WeasyPrint for PDF conversion, which requires system packages.
+    For deployment on Streamlit Cloud, you **must** add a `packages.txt` file to your repository.
+    See deployment instructions.
+    """)
 st.markdown("""
-    *Note: PDF conversion uses `xhtml2pdf`, which may not perfectly render complex layouts or modern CSS compared to a web browser.*
+    *Note: PDF quality depends on WeasyPrint's rendering capabilities. Complex layouts or modern CSS may not render perfectly.*
     """)
 
 # --- Input Form ---
@@ -725,7 +719,7 @@ if submitted:
         with tempfile.TemporaryDirectory() as tmp_dir:
             log_lines.append(f"Using temporary directory: {tmp_dir}")
             # Show a spinner while processing occurs
-            with st.spinner(f"Fetching data (from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards), converting files, and creating ZIP..."):
+            with st.spinner(f"Fetching data (from FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K onwards), converting files with WeasyPrint, and creating ZIP..."):
                 # --- Call the main processing function ---
                 pdf_files_dict = process_filing(
                     cik=cik_clean,
@@ -776,4 +770,4 @@ if submitted:
 
 # --- Footer ---
 st.markdown("---")
-st.caption(f"Mzansi EDGAR Fetcher v1.3 | Data sourced from SEC EDGAR | Fetches FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K and newer filings.")
+st.caption(f"Mzansi EDGAR Fetcher v1.4 | Data sourced from SEC EDGAR | Uses WeasyPrint | Fetches FY{EARLIEST_FISCAL_YEAR_SUFFIX} 10-K and newer filings.")
