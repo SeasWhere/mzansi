@@ -69,6 +69,7 @@ session.mount('https://', adapter)
 # <<< End pool configuration >>>
 session.headers.update(HEADERS) # Apply the determined User-Agent
 DEFAULT_TIMEOUT = 20
+max_workers=10
 
 # --- NEW: Expected FY 8-K Filing Months based on user's table ---
 # Key: Fiscal Year End Month (int)
@@ -1100,7 +1101,7 @@ def process_filing(cik, ticker, fy_month_str, fy_adjust, log_lines, tmp_dir, lat
                 progress_data["total"] = total_files
                 progress_data["current"] = 0
 
-            with ThreadPoolExecutor(max_workers=10) as executor:
+            with ThreadPoolExecutor(max_workers) as executor:
                 future_to_url = {
                     executor.submit(robust_get, f"https://data.sec.gov/submissions/{file_info['name']}"): file_info['name']
                     for file_info in historical_files_to_fetch
@@ -1339,11 +1340,8 @@ def process_filing(cik, ticker, fy_month_str, fy_adjust, log_lines, tmp_dir, lat
             progress_data["total"] = total_tasks
             progress_data["current"] = 0
         
-        workers = min(int(os.getenv("EDGAR_THREADS", multiprocessing.cpu_count() * 2)), 16)
-        workers = max(1, workers)
-        log_lines.append(f"Using {workers} worker threads.")
         
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with ThreadPoolExecutor(max_workers) as executor:
             futures_map = {executor.submit(download_and_process_generic, **task_details, log_lines=log_lines): task_details for task_details in tasks_to_submit}
             for i, future in enumerate(as_completed(futures_map)):
                 task_info = futures_map[future]
