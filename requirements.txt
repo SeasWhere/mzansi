@@ -1,7 +1,5 @@
-# requirements.txt
 streamlit
 requests
 beautifulsoup4
 weasyprint
-lxml # Recommended parser for BeautifulSoup
-html5lib # Alternative parser for BeautifulSoup
+...
